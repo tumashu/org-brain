@@ -268,6 +268,24 @@ First `org-brain-vis-title-append-functions' are ran, and then these."
              org-brain-entry-todo-state
              org-brain-entry-tags-string))
 
+(defcustom org-brain-vis-separator-function nil
+  ""
+  :group 'org-brain
+  :type 'hook
+  :options '(org-brain-entry-icon
+             org-brain-entry-todo-state
+             org-brain-entry-tags-string))
+
+(setq org-brain-vis-add-separator-function 'org-brain-vis-add-separator-function-default)
+
+(defun org-brain-vis-add-separator-function-default (current-entry previous-entry &optional column)
+  (when (and current-entry previous-entry)
+    (let ((current-tags (org-brain-get-tags current-entry))
+          (previous-tags (org-brain-get-tags previous-entry)))
+      (unless (equal current-tags previous-tags)
+        (insert "\n")
+        (when column (move-to-column column t))))))
+
 (defcustom org-brain-exclude-text-tag "notext"
   "`org-mode' tag stopping `org-brain-visualize' from fetching entry text.
 Only applies to headline entries."
@@ -2909,21 +2927,26 @@ Helper function for `org-brain-visualize'."
                (col-start (+ 3 max-width))
                (parent-width (string-width (org-brain-vis-title (car parent)))))
           (org-goto-line base-line)
-          (mapc
-           (lambda (child)
-             (picture-forward-column col-start)
-             (org-brain--insert-wire (make-string (1+ parent-width) ?\ ) "+-")
-             (org-brain-insert-visualize-button
-              child
-              (if (and (member (car parent) (org-brain-local-parent child))
-                       (member (car parent) (org-brain-local-parent entry)))
-                  'org-brain-local-sibling
-                'org-brain-sibling) 'sibling)
-             (setq max-width (max max-width (current-column)))
-             (newline (forward-line 1)))
-           (if (member org-brain-no-sort-children-tag parent-tags)
-               children-links
-             (sort children-links org-brain-visualize-sort-function)))
+          (let (previous-child)
+            (mapc
+             (lambda (child)
+               (picture-forward-column col-start)
+               (org-brain--insert-wire (make-string (1+ parent-width) ?\ ) "+-")
+               (org-brain-insert-visualize-button
+                child
+                (if (and (member (car parent) (org-brain-local-parent child))
+                         (member (car parent) (org-brain-local-parent entry)))
+                    'org-brain-local-sibling
+                  'org-brain-sibling) 'sibling)
+               (setq max-width (max max-width (current-column)))
+               (newline (forward-line 1))
+               (when (and previous-child child)
+                 (funcall org-brain-vis-add-separator-function
+                          child previous-child))
+               (setq previous-child child))
+             (if (member org-brain-no-sort-children-tag parent-tags)
+                 children-links
+               (sort children-links org-brain-visualize-sort-function))))
           (org-goto-line base-line)
           (forward-line (1- sibling-middle))
           (picture-forward-column col-start)
@@ -2987,28 +3010,38 @@ Helper function for `org-brain-visualize'."
                              0
                            (eval org-brain-child-linebreak-sexp))))
       (insert "\n\n")
-      (dolist (child (if (member org-brain-no-sort-children-tag tags)
-                         children
-                       (sort children org-brain-visualize-sort-function)))
-        (let ((child-title (org-brain-title child))
-              (face (if (member entry (org-brain-local-parent child))
-                        'org-brain-local-child
-                      'org-brain-child)))
-          (when (> (+ (current-column) (length child-title)) fill-col)
-            (insert "\n"))
-          (org-brain-insert-visualize-button child face 'child)
-          (insert "  "))))))
+      (let (previous-child)
+        (dolist (child (if (member org-brain-no-sort-children-tag tags)
+                           children
+                         (sort children org-brain-visualize-sort-function)))
+          (let ((child-title (org-brain-title child))
+                (face (if (member entry (org-brain-local-parent child))
+                          'org-brain-local-child
+                        'org-brain-child)))
+            (when (> (+ (current-column) (length child-title)) fill-col)
+              (insert "\n"))
+            (when (and previous-child child)
+              (funcall org-brain-vis-add-separator-function
+                       child previous-child))
+            (setq previous-child child)
+            (org-brain-insert-visualize-button child face 'child)
+            (insert "  ")))))))
 
 (defun org-brain--vis-friends (entry)
   "Insert friends of ENTRY.
 Helper function for `org-brain-visualize'."
   (when-let ((friends (org-brain-friends entry)))
     (org-brain--insert-wire " <-> ")
-    (dolist (friend (sort friends org-brain-visualize-sort-function))
-      (let ((column (current-column)))
-        (org-brain-insert-visualize-button friend 'org-brain-friend 'friend)
-        (picture-move-down 1)
-        (move-to-column column t)))
+    (let (previous-friend)
+      (dolist (friend (sort friends org-brain-visualize-sort-function))
+        (let ((column (current-column)))
+          (org-brain-insert-visualize-button friend 'org-brain-friend 'friend)
+          (when (and previous-friend friend)
+            (funcall org-brain-vis-add-separator-function
+                     friend previous-friend column))
+          (setq previous-friend friend)
+          (picture-move-down 1)
+          (move-to-column column t))))
     (kill-whole-line)
     (backward-char 1)))
 
